@@ -1,0 +1,33 @@
+
+Call:
+lagsarlm(formula = access_deficit ~ hdi + poverty_rate + log_pop_density + 
+    log_grdp_pc + water_access + is_city, data = data, listw = listw)
+
+Residuals:
+     Min       1Q   Median       3Q      Max 
+-18.9857  -2.5382  -0.3267   1.6916  72.0717 
+
+Type: lag 
+Coefficients: (asymptotic standard errors) 
+                 Estimate Std. Error z value  Pr(>|z|)
+(Intercept)     32.294998   5.916613  5.4584 4.806e-08
+hdi             -0.386919   0.094111 -4.1113 3.934e-05
+poverty_rate     0.246139   0.056781  4.3349 1.458e-05
+log_pop_density -0.064140   0.510664 -0.1256  0.900048
+log_grdp_pc     -0.793671   0.941335 -0.8431  0.399154
+water_access    -0.079643   0.020697 -3.8481  0.000119
+is_city          4.258065   1.031697  4.1272 3.671e-05
+
+Rho: 0.32443, LR test value: 43.037, p-value: 5.372e-11
+Asymptotic standard error: 0.047445
+    z-value: 6.838, p-value: 8.0282e-12
+Wald statistic: 46.759, p-value: 8.0281e-12
+
+Log likelihood: -1661.403 for lag model
+ML residual variance (sigma squared): 39.821, (sigma: 6.3104)
+Number of observations: 508 
+Number of parameters estimated: 9 
+AIC: 3340.8, (AIC for lm: 3381.8)
+LM test for residual autocorrelation
+test value: 1.0913, p-value: 0.29617
+
