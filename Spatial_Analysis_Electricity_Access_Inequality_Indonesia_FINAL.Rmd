@@ -1,0 +1,738 @@
+---
+title: "Spatial Analysis of Electricity Access Inequality in Indonesia"
+subtitle: "Spatial Statistics and Machine Learning on District-Level INDO-DAPOER Data (2019)"
+author: "Nanda Zahri Wibowo"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+    fig_caption: true
+    extra_dependencies: ["float", "booktabs"]
+    keep_tex: false
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: "cosmo"
+    highlight: "tango"
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  message    = FALSE,
+  warning    = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  fig.pos    = "H",
+  out.width  = "85%"
+)
+
+is_pdf <- knitr::is_latex_output()
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(knitr)
+  library(kableExtra)
+  library(ggcorrplot)
+  library(spdep)
+})
+
+# Consistent kable styling: booktabs + centred (hold position) in PDF,
+# striped bootstrap table in HTML.
+show_table <- function(df, caption, digits = 2, col.names = NA) {
+  k <- kable(df, caption = caption, digits = digits, booktabs = is_pdf,
+             col.names = col.names, format.args = list(big.mark = ","))
+  if (is_pdf) {
+    kable_styling(k, latex_options = c("HOLD_position", "striped"),
+                  position = "center")
+  } else {
+    kable_styling(k, bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE, position = "center")
+  }
+}
+
+set.seed(2019)
+```
+
+\newpage
+
+# Introduction
+
+## Background
+
+Indonesia is the world's largest archipelagic state: more than 17,000 islands
+spread across three time zones, with enormous variation in geography, income,
+and infrastructure. Electricity is a foundational input for education, health
+services, and economic activity, and Indonesia has made remarkable progress in
+extending it: the national electrification programme pushed household access
+from roughly two-thirds of households in the 1990s to near-universal coverage
+today (World Bank, 2021; IEA, 2020).
+
+That national success, however, hides a sharp spatial story. By 2019 the
+*median* Indonesian district (kabupaten/kota) had essentially closed its
+electricity gap, yet a small set of districts -- concentrated in Papua, Nusa
+Tenggara Timur, and Maluku -- still had a substantial share of households
+without electricity, in the most extreme case almost the entire district. The
+policy problem has therefore shifted from "raising the average" to "reaching
+the last places", and those last places are not scattered at random: they
+cluster in specific corners of the archipelago.
+
+This study examines that residual inequality using district-level data for
+2019 from INDO-DAPOER, the Indonesia Database for Policy and Economic Research
+compiled jointly by the World Bank and BPS-Statistics Indonesia. The outcome
+of interest is the **electricity access deficit**: the percentage of
+households in a district *without* access to electricity.
+
+## Research Questions
+
+1. How is the electricity access deficit distributed across Indonesian
+   districts, and how large are the remaining disparities?
+2. Which socio-economic characteristics are associated with the deficit?
+3. Does the deficit exhibit spatial clustering, and where are the hotspots?
+4. How well can machine learning models predict the district-level deficit
+   from socio-economic variables, and which variables matter most?
+5. What do simple policy scenarios suggest about the potential of
+   complementary development interventions?
+
+## Significance
+
+- **Academic**: adds district-level (rather than province-level) evidence on
+  energy inequality in a developing archipelagic country, combining spatial
+  econometrics with machine learning.
+- **Practical**: identifies the specific district clusters where the
+  remaining electrification effort should be concentrated.
+- **Methodological**: demonstrates a fully reproducible pipeline from a
+  public API to the final report; every figure in this document is generated
+  from the raw data.
+
+\newpage
+
+# Literature Review
+
+## Energy Inequality
+
+Energy inequality denotes disparities in access to, and quality of, modern
+energy services across social groups or regions. In developing countries it
+typically appears as an urban-rural or core-periphery divide, and it is
+increasingly measured not by national averages but by the distribution of
+access across sub-national units (IEA, 2020). When access approaches 100%
+nationally, the analytically interesting quantity becomes the *deficit* in
+the lagging tail of the distribution -- the framing adopted here.
+
+## Regional Development Theory
+
+Core-periphery models of regional development (Myrdal, 1957; Hirschman, 1958)
+predict that capital, labour, and infrastructure agglomerate in core regions,
+while peripheral regions face cumulative disadvantage: low density and
+difficult terrain raise the unit cost of infrastructure, low incomes weaken
+demand, and weak infrastructure in turn depresses income. Indonesia is a
+textbook case: Java-Bali forms the demographic and economic core, while the
+eastern islands -- especially the Papuan highlands -- are the classic
+periphery. This theory motivates two empirical expectations: (i) the access
+deficit should correlate with broader development indicators, and (ii) it
+should be spatially clustered rather than randomly scattered.
+
+## Determinants of Electricity Access
+
+Prior empirical work points to a consistent set of correlates of electricity
+access in developing countries:
+
+- **Income and expenditure**: richer households and richer regions can afford
+  connections and attract grid investment.
+- **Human development**: composite indices such as the HDI capture education
+  and health conditions that co-evolve with infrastructure.
+- **Poverty**: poverty headcounts flag the demand-side constraint directly.
+- **Population density**: grid extension has strong economies of density;
+  sparse settlement raises per-connection cost.
+- **Complementary infrastructure**: access to safe water proxies the general
+  reach of public service delivery into a district.
+
+## Spatial Methods and Machine Learning
+
+Global Moran's I (Moran, 1950) tests whether a variable is spatially
+autocorrelated overall; LISA statistics (Anselin, 1995) locate the specific
+clusters; and the Getis-Ord Gi\* statistic (Getis & Ord, 1992; Ord & Getis,
+1995) identifies statistically significant hot- and coldspots. Spatial lag
+regression (Anselin, 1988) incorporates neighbourhood spillovers directly in
+a regression framework. On the predictive side, ensemble tree methods --
+Random Forest (Breiman, 2001) and gradient boosting (Chen & Guestrin, 2016)
+-- and regularised regression (Friedman, Hastie & Tibshirani, 2010) are
+standard tools for tabular prediction and permit variable-importance and
+partial-dependence interpretation. This study combines the two strands.
+
+\newpage
+
+# Methodology
+
+## Data Sources
+
+All data are original, public, and fully traceable; the raw API responses are
+archived in the project's `data/raw_dapoer/` folder **and** `build_dataset.R`
+re-downloads any missing file automatically from the original public APIs, so
+the dataset is both included with the submission and automatically
+downloadable in code. This dataset is not among the well-known teaching
+datasets (iris, titanic, MNIST, MovieLens, etc.) and this project is unrelated
+to the MovieLens recommender project.
+
+1. **INDO-DAPOER** (Indonesia Database for Policy and Economic Research),
+   World Bank & BPS-Statistics Indonesia. District-level indicators for
+   **2019** -- the most recent year with complete district coverage --
+   retrieved from the World Bank API v2 (source id 45) on 14 July 2026.
+2. **geoBoundaries** gbOpen release, Indonesia ADM2 boundaries (519 units,
+   2020 vintage; Runfola et al., 2020), used for district centroids and land
+   areas.
+
+The 514 DAPOER districts were matched to boundary polygons by normalised
+name and type (regency/city); nine districts required documented manual
+matches for official renames (e.g. Kabupaten Pontianak became Mempawah under
+Government Regulation 58/2014). Six districts are excluded for missing 2019
+values: Buton Selatan, Buton Tengah, and Muna Barat (created in 2014, no
+population figures in DAPOER) and Deiyai, Mamberamo Tengah, and Puncak in
+Papua (no safe-water figures). This leaves **508 districts** with complete
+data on every variable used in the analysis.
+
+```{r data-import}
+# If the analysis outputs are missing, run the full pipeline once
+# (the analysis script also rebuilds the dataset itself if needed).
+if (!file.exists("output/final_analysis_results.csv")) {
+  message("Analysis outputs not found -- running the analysis script now ...")
+  source("analysis_electricity_access_inequality_indonesia_FINAL.R")
+}
+stopifnot(file.exists("output/final_analysis_results.csv"))
+data <- read_csv("output/final_analysis_results.csv", show_col_types = FALSE)
+cat("Districts loaded:", nrow(data), "\n")
+```
+
+## Variables
+
+| Variable | INDO-DAPOER series | Description |
+|:---|:---|:------|
+| `access_deficit` | HOU.ELC.ACSN.ZS | 100 minus % of households with electricity |
+| `hdi` | IDX.HDI.REV | Human Development Index, revised method (0-100) |
+| `poverty_rate` | SI.POV.NAPR.ZS | Poverty headcount (% of population) |
+| `expenditure_pc_thousand` | HOU.XPD.PC.CR | Household expenditure per capita (thousand IDR/month) |
+| `grdp_per_capita` | NA.GDP.INC.OG.SNA08.KR / SP.POP.TOTL | GRDP per person (constant-price, IDR million) |
+| `population_density` | SP.POP.TOTL / polygon area | People per km$^2$ |
+| `water_access` | HOU.H2O.ACSN.ZS | % of households with safe water |
+| `literacy_rate` | SE.LITR.15UP.ZS | Literacy, population 15+ (%) |
+| `is_city` | location type | 1 = kota (city), 0 = kabupaten (regency) |
+
+Density and GRDP per capita enter models in $\log_{10}$ form because both are
+heavily right-skewed.
+
+## Analytical Techniques
+
+**Exploratory analysis.** Distributions, Spearman correlations (robust to the
+extreme skew of the deficit), and provincial rankings.
+
+**Spatial statistics.** A k-nearest-neighbour spatial weights matrix
+($k = 5$, row-standardised) built on district centroids -- appropriate for an
+archipelago where contiguity is undefined across water. We compute global
+Moran's I, LISA cluster maps, Getis-Ord Gi\* hotspots, and a spatial lag model
+(`spatialreg::lagsarlm`).
+
+**Machine learning.** Four models -- OLS, Random Forest, XGBoost, Elastic Net
+-- trained on an 80% split with 10-fold cross-validation and compared on the
+20% hold-out by RMSE, MAE, and $R^2$. The best model is interpreted through
+variable importance and partial dependence.
+
+**Policy simulation.** The best model predicts the national mean deficit
+under counterfactual scenarios: HDI +5 points, poverty $-25\%$, safe-water
+access +10 percentage points, and all three combined. These are associative
+(not causal) what-if illustrations.
+
+**Software.** All analyses were conducted in R (R Core Team, 2024). Spatial
+statistics use the `spdep` and `spatialreg` packages (Bivand et al., 2013),
+machine learning uses `randomForest` (Breiman, 2001; Liaw & Wiener, 2002),
+`xgboost` (Chen & Guestrin, 2016), and `glmnet` (Friedman et al., 2010), and
+graphics use `ggplot2` (Wickham, 2016).
+
+\newpage
+
+# Results and Discussion
+
+## Descriptive Statistics
+
+```{r descriptive-stats}
+desc <- data %>%
+  select(access_deficit, hdi, poverty_rate, population_density,
+         grdp_per_capita, water_access) %>%
+  pivot_longer(everything(), names_to = "Variable") %>%
+  group_by(Variable) %>%
+  summarise(Min = min(value), Q1 = quantile(value, .25), Median = median(value),
+            Mean = mean(value), Q3 = quantile(value, .75), Max = max(value),
+            .groups = "drop")
+
+show_table(desc, "Descriptive statistics, 508 districts (2019)")
+```
+
+```{r distribution-plots, fig.cap="Distributions of the access deficit and key predictors"}
+data %>%
+  select(access_deficit, hdi, poverty_rate, log_pop_density) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 40,
+                 fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkred", linewidth = 0.8) +
+  facet_wrap(~variable, scales = "free") +
+  labs(x = NULL, y = "Density") +
+  theme_minimal()
+```
+
+The most striking feature is the extreme skew of the outcome. The median
+district has a deficit of only `r round(median(data$access_deficit), 2)`%,
+and three-quarters of districts are below
+`r round(quantile(data$access_deficit, .75), 2)`% -- electrification is
+essentially complete for most of Indonesia. Yet the maximum reaches
+`r round(max(data$access_deficit), 1)`% (Kabupaten
+`r data$district[which.max(data$access_deficit)]` in the Papuan highlands,
+where only about `r round(100 - max(data$access_deficit), 1)`% of
+households had electricity in 2019). The distribution of HDI is roughly
+symmetric around `r round(mean(data$hdi), 1)`, while poverty and density are
+right-skewed, as expected.
+
+## Correlation Analysis
+
+```{r correlation-analysis, fig.cap="Spearman correlation matrix of key variables"}
+corr <- data %>%
+  select(access_deficit, hdi, poverty_rate, expenditure_pc_thousand,
+         log_pop_density, log_grdp_pc, water_access, literacy_rate) %>%
+  cor(method = "spearman")
+
+ggcorrplot(corr, hc.order = TRUE, type = "lower", lab = TRUE, lab_size = 2.8,
+           colors = c("#B2182B", "white", "#2166AC"),
+           ggtheme = theme_minimal)
+```
+
+Spearman correlations (used because of the outcome's skew) show the deficit
+is most strongly **negatively** associated with HDI
+($\rho$ = `r round(cor(data$access_deficit, data$hdi, method = "spearman"), 2)`),
+literacy, per-capita expenditure, and safe-water access, and **positively**
+with the poverty rate
+($\rho$ = `r round(cor(data$access_deficit, data$poverty_rate, method = "spearman"), 2)`).
+The predictors are themselves inter-correlated -- HDI, literacy, expenditure,
+and poverty form one development syndrome -- which motivates the use of
+regularised and tree-based models later.
+
+## Provincial Disparities
+
+```{r gap-by-province, fig.cap="Mean electricity access deficit by province, 2019", fig.height=6.5}
+prov <- read_csv("output/province_summary.csv", show_col_types = FALSE)
+
+prov %>%
+  ggplot(aes(x = reorder(province, mean_deficit), y = mean_deficit)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(x = NULL, y = "Mean share of households without electricity (%)") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 7.5))
+```
+
+```{r top-bottom-table}
+prov_tbl <- bind_rows(
+  prov %>% slice_max(mean_deficit, n = 5) %>% mutate(Group = "Highest deficit"),
+  prov %>% slice_min(mean_deficit, n = 5) %>% mutate(Group = "Lowest deficit")
+) %>%
+  select(Group, Province = province, `Mean deficit (%)` = mean_deficit,
+         `Worst district (%)` = worst_deficit, Districts = districts)
+
+show_table(prov_tbl, "Provinces with the highest and lowest mean access deficit (2019)")
+```
+
+The provincial ranking is unambiguous. Papua's districts average a
+`r round(prov$mean_deficit[1], 1)`% deficit -- an order of magnitude above
+the national norm -- followed by Nusa Tenggara Timur
+(`r round(prov$mean_deficit[2], 1)`%) and Papua Barat
+(`r round(prov$mean_deficit[3], 1)`%). At the other end, the provinces of
+Java, Bali, and several Sumatran provinces are effectively at zero. Within
+provinces, heterogeneity can be large: Sumatera Barat averages only
+`r prov %>% filter(province == "Sumatera Barat") %>% pull(mean_deficit) %>% round(1)`%
+yet contains Kepulauan Mentawai at roughly 26%, a reminder that isolated
+island districts lag even inside otherwise well-served provinces.
+
+## Spatial Analysis
+
+### Global Spatial Autocorrelation
+
+```{r morans-i}
+coords <- as.matrix(data[, c("longitude", "latitude")])
+nb     <- knn2nb(knearneigh(coords, k = 5))
+listw  <- nb2listw(nb, style = "W")
+
+moran <- moran.test(data$access_deficit, listw)
+moran_tbl <- tibble(
+  Statistic = c("Moran's I", "Expectation", "Variance", "p-value"),
+  Value = c(round(moran$estimate[1], 4), round(moran$estimate[2], 4),
+            round(moran$estimate[3], 6),
+            signif(moran$p.value, 3))
+)
+show_table(moran_tbl, "Global Moran's I for the access deficit (k = 5 neighbours)",
+           digits = 4)
+```
+
+Moran's I is `r round(moran$estimate[1], 3)` with a p-value below
+$10^{-15}$: the access deficit is strongly and significantly spatially
+autocorrelated. Districts with large deficits neighbour other high-deficit
+districts.
+
+### Spatial Distribution and Hotspots
+
+```{r map-deficit, fig.cap="Access deficit at district centroids, 2019", out.width="95%", fig.width=10, fig.height=5}
+ggplot(data, aes(longitude, latitude, color = access_deficit)) +
+  geom_point(size = 1.6, alpha = 0.85) +
+  scale_color_viridis_c(option = "inferno", direction = -1) +
+  labs(x = "Longitude", y = "Latitude", color = "Deficit (%)") +
+  theme_minimal()
+```
+
+```{r map-lisa, fig.cap="LISA clusters of the access deficit", out.width="95%", fig.width=10, fig.height=5}
+ggplot(data, aes(longitude, latitude, color = lisa_cluster)) +
+  geom_point(size = 1.6, alpha = 0.85) +
+  scale_color_manual(values = c("High-High" = "#D73027", "Low-Low" = "#4575B4",
+                                "High-Low" = "#FC8D59", "Low-High" = "#91BFDB",
+                                "Not significant" = "grey80")) +
+  labs(x = "Longitude", y = "Latitude", color = "Cluster") +
+  theme_minimal()
+```
+
+```{r map-hotspot, fig.cap="Getis-Ord Gi* hotspots of the access deficit", out.width="95%", fig.width=10, fig.height=5}
+ggplot(data, aes(longitude, latitude, color = hotspot)) +
+  geom_point(size = 1.6, alpha = 0.85) +
+  scale_color_manual(values = c("Hotspot" = "#D73027", "Coldspot" = "#4575B4",
+                                "Not significant" = "grey80")) +
+  labs(x = "Longitude", y = "Latitude", color = "Category") +
+  theme_minimal()
+```
+
+```{r cluster-counts}
+cluster_tbl <- data %>% count(lisa_cluster, name = "Districts") %>%
+  rename(`LISA cluster` = lisa_cluster)
+show_table(cluster_tbl, "LISA cluster membership", digits = 0)
+```
+
+The LISA analysis identifies `r sum(data$lisa_cluster == "High-High")`
+High-High districts -- high deficits surrounded by high deficits --
+overwhelmingly in Papua (22) and Nusa Tenggara Timur (12), with the
+remainder in Maluku, Papua Barat, and the Nias islands of Sumatera Utara.
+The Gi\* statistic flags `r sum(data$hotspot == "Hotspot")` hotspot
+districts in the same regions. There are no Low-Low clusters or coldspots:
+because most of the country sits at (near-)zero deficit, "low" is the norm
+rather than a distinctive cluster. Inequality in electricity access is thus
+a *one-tailed spatial phenomenon*, concentrated in a single eastern
+periphery, exactly as the core-periphery framework predicts.
+
+### Spatial Lag Regression
+
+```{r spatial-lag}
+lag_model <- readRDS("output/spatial_lag_model.rds")
+lag_sum   <- summary(lag_model)
+
+coef_tbl <- as.data.frame(lag_sum$Coef) %>%
+  rownames_to_column("Term") %>%
+  as_tibble() %>%
+  mutate(across(where(is.numeric), ~ signif(.x, 3)))
+
+show_table(coef_tbl, "Spatial lag model of the access deficit", digits = 3)
+```
+
+The spatial autoregressive parameter $\rho$ =
+`r round(lag_model$rho, 3)` is highly significant (LR test p
+$< 10^{-10}$): even after controlling for socio-economic covariates, a
+district's deficit rises with its neighbours' deficits, consistent with
+shared geography and shared grid infrastructure. Conditional on location,
+higher HDI and better water access predict smaller deficits, and higher
+poverty predicts larger ones. The positive city coefficient is a
+conditional effect -- *given* its HDI and poverty level, a city has slightly
+more unserved households than a comparable regency -- and should not be read
+as cities being worse off unconditionally. Log density and log GRDP per
+capita are not significant once the human-development variables and the
+spatial lag are included. The LM test for residual autocorrelation
+(statistic = `r round(as.numeric(lag_sum$LMtest), 2)`,
+p = `r round(pchisq(as.numeric(lag_sum$LMtest), df = 1, lower.tail = FALSE), 2)`)
+indicates the lag term has absorbed the spatial dependence.
+
+## Predictive Modelling
+
+### Model Comparison
+
+```{r model-comparison}
+perf <- read_csv("output/model_performance.csv", show_col_types = FALSE)
+show_table(perf, "Hold-out performance on the 20 percent test set",
+           digits = 3)
+```
+
+`r perf$Model[1]` performs best, with hold-out RMSE
+`r round(perf$RMSE[1], 2)` percentage points and $R^2$
+`r round(perf$R2[1], 2)`. The tree ensembles clearly beat the linear models
+on MAE (about `r round(perf$MAE[perf$Model == "Random Forest"], 1)` versus
+`r round(perf$MAE[perf$Model == "Linear"], 1)` points), indicating that they
+capture the many all-but-zero districts far more accurately; the RMSE gap is
+narrower because a handful of extreme Papuan districts dominate the squared
+error of every model. An honest reading is that socio-economic variables
+explain roughly half of the hold-out variance -- geography, terrain, and
+infrastructure history, which are absent from the feature set, account for
+much of the rest.
+
+### Variable Importance
+
+```{r variable-importance, fig.cap="Variable importance of the best model"}
+imp <- read_csv("output/variable_importance.csv", show_col_types = FALSE)
+imp %>%
+  ggplot(aes(x = reorder(variable, Overall), y = Overall)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(x = NULL, y = "Relative importance (0-100)") +
+  theme_minimal()
+```
+
+HDI dominates the importance ranking, at roughly three times the weight of
+the next group (per-capita expenditure, poverty, log GRDP per capita, log
+density). This mirrors the correlation and regression results: the
+electricity deficit is above all a *human-development* phenomenon.
+
+### Partial Dependence
+
+```{r partial-dependence, fig.cap="Partial dependence of the predicted deficit on the top-3 predictors", out.width="95%", fig.width=10, fig.height=3.5}
+include_graphics("output/partial_dependence.png")
+```
+
+The partial dependence plots reveal a strongly non-linear HDI effect: the
+predicted deficit is flat and low for HDI above roughly 60, then rises
+steeply as HDI falls below that threshold. This threshold behaviour --
+invisible to a linear model -- explains the tree models' advantage and
+suggests that districts below HDI $\approx$ 60 constitute a qualitatively
+distinct policy group.
+
+### Policy Simulation
+
+```{r policy-simulation}
+sim <- read_csv("output/policy_simulation.csv", show_col_types = FALSE)
+show_table(sim %>%
+             rename(`Mean predicted deficit (%)` = mean_deficit,
+                    `Change vs baseline (pp)` = change_vs_baseline),
+           "Predicted national mean deficit under counterfactual scenarios",
+           digits = 2)
+```
+
+```{r policy-plot, fig.cap="Scenario comparison of the predicted mean access deficit"}
+sim %>%
+  ggplot(aes(x = reorder(Scenario, -mean_deficit), y = mean_deficit)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = sprintf("%.2f", mean_deficit)), vjust = -0.4, size = 3.4) +
+  labs(x = NULL, y = "Mean predicted deficit (%)") +
+  theme_minimal()
+```
+
+Under the model, a five-point HDI improvement is associated with the largest
+single reduction in the predicted mean deficit
+(`r sprintf('%.2f', abs(sim$change_vs_baseline[sim$Scenario == "HDI +5 points"]))` pp),
+and the combined scenario roughly a
+`r sprintf('%.1f', abs(sim$change_vs_baseline[sim$Scenario == "Combined"]))`-pp
+reduction -- about a third of the baseline mean. Two caveats are essential.
+First, these are *associative* counterfactuals from a predictive model, not
+causal estimates. Second, because the deficit is concentrated in a few dozen
+districts, national means understate what such changes would imply locally:
+the gains accrue almost entirely in the eastern hotspot districts.
+
+## Discussion
+
+Three findings stand out. First, Indonesia's electricity access problem in
+2019 is no longer a broad national gap but a *residual, spatially
+concentrated* deficit: `r sum(data$lisa_cluster == "High-High")` High-High
+districts, essentially the Papuan
+highlands plus parts of Nusa Tenggara Timur and Maluku, against a
+near-universally electrified rest of the country. Second, the deficit is
+tightly bound to overall human development -- HDI is the strongest correlate,
+regressor, and predictor throughout -- with a threshold around HDI 60 below
+which the deficit escalates sharply. Third, spatial dependence survives
+socio-economic controls ($\rho \approx$ `r round(lag_model$rho, 2)`),
+implying neighbourhood-level
+drivers (terrain, isolated grids, shared remoteness) beyond district
+characteristics.
+
+For policy, this argues against uniform national programmes and for a
+targeted, spatially explicit strategy: off-grid and mini-grid solutions for
+the low-density highland hotspots, bundled with the education and
+poverty-reduction investments that the HDI linkage implies, rather than
+grid extension alone.
+
+\newpage
+
+# Conclusion and Recommendations
+
+## Summary of Findings
+
+1. **Near-universal access with a hard tail.** The median district deficit
+   is `r round(median(data$access_deficit), 2)`%, but Papua's districts
+   average about `r round(prov$mean_deficit[1])`% and the worst district
+   reaches `r round(max(data$access_deficit))`%.
+2. **Strong spatial clustering.** Moran's I =
+   `r round(moran$estimate[1], 2)` (p $< 10^{-15}$); all
+   `r sum(data$lisa_cluster == "High-High")` High-High LISA districts and
+   all `r sum(data$hotspot == "Hotspot")` Gi\* hotspots lie in eastern
+   Indonesia; no coldspots exist because near-zero deficit is the national
+   norm.
+3. **Human development is the dominant correlate.** HDI, poverty,
+   expenditure, and water access dwarf density and GRDP once compared
+   jointly; the HDI effect is non-linear with a threshold near 60.
+4. **Spatial spillovers persist.** The spatial lag model's $\rho$ =
+   `r round(lag_model$rho, 2)` remains significant after socio-economic
+   controls.
+5. **Models predict moderately well.** `r perf$Model[1]` attains hold-out
+   $R^2 \approx$ `r round(perf$R2[1], 2)`; the unexplained half plausibly
+   reflects terrain and infrastructure history absent from the data.
+
+## Policy Implications
+
+1. **Target the identified hotspots.** The
+   `r sum(data$hotspot == "Hotspot")` Gi\* hotspot districts are a
+   concrete priority list for the remaining electrification effort.
+2. **Choose technology by geography.** Sparse highland and island districts
+   are candidates for solar mini-grids and off-grid systems rather than
+   costly grid extension.
+3. **Bundle interventions.** The tight HDI-deficit link suggests
+   electrification programmes should be coordinated with education, health,
+   and poverty programmes in the same districts.
+4. **Monitor at district level.** Provincial averages hide within-province
+   pockets such as Kepulauan Mentawai; district-level (or finer) monitoring
+   is necessary.
+
+## Limitations
+
+1. **Cross-sectional design.** A single year (2019) precludes dynamic or
+   causal analysis.
+2. **Access is binary and supply-side.** The household-access measure
+   ignores reliability, hours of supply, and affordability.
+3. **Omitted geography.** Terrain ruggedness, distance to the existing grid,
+   and island isolation are not in the feature set and likely explain much
+   of the residual variance.
+4. **Centroid-based weights.** k-NN weights on centroids approximate, but do
+   not fully capture, real connectivity in an archipelago.
+5. **Predictive, not causal.** All model-based scenario results are
+   associations; they cannot support causal claims about interventions.
+
+## Future Research
+
+1. Panel analysis of the 1996-2020 DAPOER series to study convergence in
+   access.
+2. Adding terrain, grid-distance, and night-lights covariates.
+3. Causal evaluation of specific programmes (e.g. pre-electrification
+   solar-lamp schemes) with quasi-experimental designs.
+4. Measuring reliability and affordability, not just connection status.
+
+## Concluding Remark
+
+Indonesia's electrification achievement is real, but its final chapter is a
+spatial one. The remaining unserved households are concentrated in a small,
+well-identified set of eastern districts where low human development,
+poverty, and geographic isolation reinforce one another. Data-driven spatial
+targeting -- of the kind demonstrated here with fully public data -- can help
+direct the last mile of the effort to exactly those places.
+
+# Acknowledgement of Sources and Academic Integrity
+
+In line with the *Harvard Guide to Using Sources* (Harvard College Writing
+Program, n.d.) and the HarvardX honor code, the author confirms that this
+report is original work. All data are drawn from the publicly available
+INDO-DAPOER database (World Bank & BPS-Statistics Indonesia, 2022) and the
+geoBoundaries project (Runfola et al., 2020), both cited in full below with
+retrieval details. Every statistical method, theoretical framework, and
+software package used is attributed to its original authors through in-text
+citations and the reference list; all remaining analysis, interpretation, and
+writing are the author's own. This work has not been submitted for credit in
+any other course.
+
+\newpage
+
+# References
+
+Anselin, L. (1988). *Spatial Econometrics: Methods and Models*. Dordrecht:
+Kluwer Academic Publishers.
+
+Anselin, L. (1995). Local indicators of spatial association -- LISA.
+*Geographical Analysis*, 27(2), 93-115.
+
+Badan Pusat Statistik. (2021). *Statistik Indonesia 2021*. Jakarta: BPS.
+
+Bivand, R., Pebesma, E., & Gómez-Rubio, V. (2013). *Applied Spatial Data
+Analysis with R* (2nd ed.). New York: Springer.
+
+Breiman, L. (2001). Random forests. *Machine Learning*, 45(1), 5-32.
+
+Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system.
+*Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge
+Discovery and Data Mining*, 785-794.
+
+Friedman, J., Hastie, T., & Tibshirani, R. (2010). Regularization paths for
+generalized linear models via coordinate descent. *Journal of Statistical
+Software*, 33(1), 1-22.
+
+Getis, A., & Ord, J. K. (1992). The analysis of spatial association by use of
+distance statistics. *Geographical Analysis*, 24(3), 189-206.
+
+Harvard College Writing Program. (n.d.). *Harvard Guide to Using Sources:
+Avoiding Plagiarism*. Cambridge, MA: Harvard College Writing Program.
+https://usingsources.fas.harvard.edu
+
+Hirschman, A. O. (1958). *The Strategy of Economic Development*. New Haven:
+Yale University Press.
+
+IEA. (2020). *SDG7: Data and Projections*. Paris: International Energy
+Agency.
+
+Kementerian ESDM. (2021). *Rencana Umum Ketenagalistrikan Nasional
+2019-2038*. Jakarta: Kementerian Energi dan Sumber Daya Mineral.
+
+Liaw, A., & Wiener, M. (2002). Classification and regression by
+randomForest. *R News*, 2(3), 18-22.
+
+Moran, P. A. P. (1950). Notes on continuous stochastic phenomena.
+*Biometrika*, 37(1/2), 17-23.
+
+Myrdal, G. (1957). *Economic Theory and Under-developed Regions*. London:
+Duckworth.
+
+Ord, J. K., & Getis, A. (1995). Local spatial autocorrelation statistics:
+Distributional issues and an application. *Geographical Analysis*, 27(4),
+286-306.
+
+R Core Team. (2024). *R: A language and environment for statistical
+computing*. Vienna: R Foundation for Statistical Computing.
+https://www.R-project.org
+
+Runfola, D., Anderson, A., Baier, H., Crittenden, M., Dowker, E., Fuhrig,
+S., et al. (2020). geoBoundaries: A global database of political
+administrative boundaries. *PLoS ONE*, 15(4), e0231866.
+
+Wickham, H. (2016). *ggplot2: Elegant Graphics for Data Analysis* (2nd ed.).
+New York: Springer.
+
+World Bank. (2021). *Access to electricity (% of population)* [Data set].
+World Bank Open Data. https://data.worldbank.org/indicator/EG.ELC.ACCS.ZS
+
+World Bank & BPS-Statistics Indonesia. (2022). *Indonesia Database for
+Policy and Economic Research (INDO-DAPOER)* [Data set]. World Bank Data
+Catalog. https://datacatalog.worldbank.org/search/dataset/0038570
+
+# Appendix: Reproducibility
+
+The complete pipeline is reproducible from public sources:
+
+1. `build_dataset.R` -- parses the archived INDO-DAPOER API responses
+   (`data/raw_dapoer/`) and the geoBoundaries ADM2 file, matches districts,
+   and writes `data/dapoer_district_2019.csv`.
+2. `analysis_electricity_access_inequality_indonesia_FINAL.R` -- runs the
+   exploratory, spatial, and machine-learning analyses and writes all
+   figures and tables to `output/`.
+3. This document renders the report from those outputs.
+
+```{r session-info, echo=TRUE}
+sessionInfo()
+```
