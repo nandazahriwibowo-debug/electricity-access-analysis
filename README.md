@@ -14,7 +14,7 @@ joint World Bank / BPS database of district-level (kabupaten/kota) indicators.
   `https://api.worldbank.org/v2/sources/45/provinces/all/series/{SERIES}/time/YR2019/data?format=json&per_page=600`
 - Retrieved: **2026-07-14**
 - Licence: CC BY 4.0 (World Bank Open Data)
-- Catalog page: https://datacatalog.worldbank.org/search/dataset/0038570
+
 
 Series downloaded (year 2019, the most recent year with full district
 coverage; raw JSON stored in `raw_dapoer/`):
